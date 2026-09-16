@@ -18,6 +18,7 @@ jobs:
         env:
           UPSTREAM_REPO: "OWNER/REPOSITORY"
           API_URL: "https://TU-API-AQUI.example.com/webhook"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Obtener el SHA actual de master del repositorio original
           CURRENT_SHA=$(curl -fsSL \
@@ -32,7 +33,7 @@ jobs:
 
           echo "Last known SHA: $LAST_SHA"
 
-          # Primera ejecución: guardar el SHA pero NO enviar señal
+          # Primera ejecución
           if [ -z "$LAST_SHA" ]; then
             echo "First run. Saving current SHA."
 
@@ -67,5 +68,3 @@ jobs:
           # Guardar el nuevo SHA
           gh variable set LAST_UPSTREAM_SHA \
             --body "$CURRENT_SHA"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
