@@ -1,0 +1,71 @@
+name: Check upstream changes
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check upstream master
+        env:
+          UPSTREAM_REPO: "OWNER/REPOSITORY"
+          API_URL: "https://TU-API-AQUI.example.com/webhook"
+        run: |
+          # Obtener el SHA actual de master del repositorio original
+          CURRENT_SHA=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$UPSTREAM_REPO/commits/master" \
+            | jq -r '.sha')
+
+          echo "Upstream master: $CURRENT_SHA"
+
+          # Recuperar el último SHA que procesamos
+          LAST_SHA=$(gh variable get LAST_UPSTREAM_SHA 2>/dev/null || echo "")
+
+          echo "Last known SHA: $LAST_SHA"
+
+          # Primera ejecución: guardar el SHA pero NO enviar señal
+          if [ -z "$LAST_SHA" ]; then
+            echo "First run. Saving current SHA."
+
+            gh variable set LAST_UPSTREAM_SHA \
+              --body "$CURRENT_SHA"
+
+            exit 0
+          fi
+
+          # No hay cambios
+          if [ "$CURRENT_SHA" = "$LAST_SHA" ]; then
+            echo "No changes."
+            exit 0
+          fi
+
+          # Hay un cambio
+          echo "CHANGE DETECTED!"
+          echo "$LAST_SHA -> $CURRENT_SHA"
+
+          # Avisar a nuestra API
+          curl -fsSL \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"repository\": \"$UPSTREAM_REPO\",
+              \"branch\": \"master\",
+              \"previous_sha\": \"$LAST_SHA\",
+              \"current_sha\": \"$CURRENT_SHA\"
+            }" \
+            "$API_URL"
+
+          # Guardar el nuevo SHA
+          gh variable set LAST_UPSTREAM_SHA \
+            --body "$CURRENT_SHA"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
