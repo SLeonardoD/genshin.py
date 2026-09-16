@@ -7,69 +7,82 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  actions: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Check upstream master
         env:
-          UPSTREAM_REPO: "OWNER/REPOSITORY"
+          UPSTREAM_REPO: "seriaati/genshin.py"
           API_URL: "https://TU-API-AQUI.example.com/webhook"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_REPO: ${{ github.repository }}
         run: |
-          # Obtener el SHA actual de master del repositorio original
+
+          echo "Checking $UPSTREAM_REPO master..."
+
+          # Obtener SHA actual de master
           CURRENT_SHA=$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$UPSTREAM_REPO/commits/master" \
             | jq -r '.sha')
 
-          echo "Upstream master: $CURRENT_SHA"
+          echo "Current upstream SHA: $CURRENT_SHA"
 
-          # Si no pudimos obtener el SHA, detener el workflow
+          # Comprobar que obtuvimos un SHA válido
           if [ -z "$CURRENT_SHA" ] || [ "$CURRENT_SHA" = "null" ]; then
-            echo "Could not obtain upstream SHA."
+            echo "ERROR: Could not obtain upstream SHA."
             exit 1
           fi
 
-          # Leer el último SHA conocido
-          if [ -f ".upstream-sha" ]; then
-            LAST_SHA=$(cat .upstream-sha)
-          else
-            LAST_SHA=""
-          fi
+          # Obtener la variable LAST_UPSTREAM_SHA
+          RESPONSE=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$CURRENT_REPO/actions/variables/LAST_UPSTREAM_SHA" \
+            2>/dev/null || true)
+
+          LAST_SHA=$(echo "$RESPONSE" | jq -r '.value // empty')
 
           echo "Last known SHA: $LAST_SHA"
 
           # Primera ejecución
           if [ -z "$LAST_SHA" ]; then
-            echo "First run. Saving current SHA."
 
-            echo "$CURRENT_SHA" > .upstream-sha
+            echo "First run."
+            echo "Creating LAST_UPSTREAM_SHA..."
 
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            curl -fsSL \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$CURRENT_REPO/actions/variables" \
+              -d "{
+                \"name\": \"LAST_UPSTREAM_SHA\",
+                \"value\": \"$CURRENT_SHA\"
+              }"
 
-            git add .upstream-sha
-            git commit -m "chore: initialize upstream SHA"
-            git push
-
+            echo "Initial SHA saved."
             exit 0
           fi
 
           # No hay cambios
           if [ "$CURRENT_SHA" = "$LAST_SHA" ]; then
-            echo "No changes."
+            echo "No changes detected."
             exit 0
           fi
 
-          # Hay un cambio
+          # Hay cambios
+          echo "================================="
           echo "CHANGE DETECTED!"
-          echo "$LAST_SHA -> $CURRENT_SHA"
+          echo "Previous: $LAST_SHA"
+          echo "Current:  $CURRENT_SHA"
+          echo "================================="
 
           # Avisar a nuestra API
           curl -fsSL \
@@ -83,12 +96,17 @@ jobs:
             }" \
             "$API_URL"
 
-          # Guardar el nuevo SHA
-          echo "$CURRENT_SHA" > .upstream-sha
+          echo "API notification sent."
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Actualizar variable
+          curl -fsSL \
+            -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$CURRENT_REPO/actions/variables/LAST_UPSTREAM_SHA" \
+            -d "{
+              \"value\": \"$CURRENT_SHA\"
+            }"
 
-          git add .upstream-sha
-          git commit -m "chore: update upstream SHA"
-          git push
+          echo "SHA updated successfully."
