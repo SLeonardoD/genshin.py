@@ -1,4 +1,4 @@
-name: Check upstream changes
+name: Inprovised Webhook
 
 on:
   schedule:
@@ -7,18 +7,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check upstream master
         env:
           UPSTREAM_REPO: "OWNER/REPOSITORY"
           API_URL: "https://TU-API-AQUI.example.com/webhook"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Obtener el SHA actual de master del repositorio original
           CURRENT_SHA=$(curl -fsSL \
@@ -28,8 +30,18 @@ jobs:
 
           echo "Upstream master: $CURRENT_SHA"
 
-          # Recuperar el último SHA que procesamos
-          LAST_SHA=$(gh variable get LAST_UPSTREAM_SHA 2>/dev/null || echo "")
+          # Si no pudimos obtener el SHA, detener el workflow
+          if [ -z "$CURRENT_SHA" ] || [ "$CURRENT_SHA" = "null" ]; then
+            echo "Could not obtain upstream SHA."
+            exit 1
+          fi
+
+          # Leer el último SHA conocido
+          if [ -f ".upstream-sha" ]; then
+            LAST_SHA=$(cat .upstream-sha)
+          else
+            LAST_SHA=""
+          fi
 
           echo "Last known SHA: $LAST_SHA"
 
@@ -37,8 +49,14 @@ jobs:
           if [ -z "$LAST_SHA" ]; then
             echo "First run. Saving current SHA."
 
-            gh variable set LAST_UPSTREAM_SHA \
-              --body "$CURRENT_SHA"
+            echo "$CURRENT_SHA" > .upstream-sha
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git add .upstream-sha
+            git commit -m "chore: initialize upstream SHA"
+            git push
 
             exit 0
           fi
@@ -66,5 +84,11 @@ jobs:
             "$API_URL"
 
           # Guardar el nuevo SHA
-          gh variable set LAST_UPSTREAM_SHA \
-            --body "$CURRENT_SHA"
+          echo "$CURRENT_SHA" > .upstream-sha
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .upstream-sha
+          git commit -m "chore: update upstream SHA"
+          git push
